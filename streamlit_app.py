@@ -1,10 +1,8 @@
 import streamlit as st
 import numpy as np
-import cv2
 import mediapipe as mp
 from mediapipe.tasks.python import vision
 import json
-from io import BytesIO
 
 MODEL_JSON = "isl_simple_model.json"
 HAND_MODEL_PATH = "hand_landmarker.task"
@@ -53,45 +51,46 @@ def predict_label(vec, means):
 
 
 def process_image(image_bytes, landmarker, means):
-    # read image into OpenCV BGR
-    file_bytes = np.asarray(bytearray(image_bytes.read()), dtype=np.uint8)
-    bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    if bgr is None:
+    # Read raw bytes into a numpy array
+    data = image_bytes.read()
+    if not data:
         return None, None, None
 
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    # MediaPipe expects RGB image data as a numpy array
+    # Streamlit provides image in standard formats; we can use Mediapipe's internal loader
+    np_data = np.frombuffer(data, dtype=np.uint8)
+
+    # Decode image using MediaPipe Image API
+    # Note: mp.Image has a create_from_file method but we have bytes,
+    # so we use the data argument with SRGB format.
+    mp_image = mp.Image(
+        image_format=mp.ImageFormat.SRGB,
+        data=np_data
+    )
 
     result = landmarker.detect(mp_image)
 
     if not result.hand_landmarks:
-        return bgr, None, None
+        return None, None, None
 
-    h, w, _ = bgr.shape
     hand = result.hand_landmarks[0]
 
-    # draw landmarks
-    for lm in hand:
-        cx, cy = int(lm.x * w), int(lm.y * h)
-        cv2.circle(bgr, (cx, cy), 4, (0, 255, 0), -1)
-
     vec = landmarks_to_vector(hand)
-    # assume all mean vectors have same shape
     any_vec = next(iter(means.values()))
     if vec.shape != any_vec.shape:
-        return bgr, None, None
+        return None, None, None
 
     label, dist = predict_label(vec, means)
-    return bgr, label, dist
+    return mp_image, label, dist
 
 
 def main():
     st.set_page_config(page_title="ISL Hand Sign Translator", layout="wide")
 
-    st.title("ISL Hand Sign Translator (Image Demo)")
+    st.title("ISL Hand Sign Translator (Image Demo - MediaPipe Only)")
     st.write(
         "Upload a hand image (or capture from camera) with a single ISL sign. "
-        "The app will detect the hand landmarks and predict the closest label."
+        "The app will detect the hand landmarks and predict the closest label using the ISL model."
     )
 
     means = load_means()
@@ -108,7 +107,6 @@ def main():
 
         camera_image = st.camera_input("Or capture from your camera")
 
-        # decide which source to use: camera image has priority if both are present
         source_image = None
         source_name = None
         if camera_image is not None:
@@ -127,23 +125,22 @@ def main():
         st.subheader("2. Result")
 
         if source_image is not None:
-            bgr, label, dist = process_image(source_image, landmarker, means)
+            mp_image, label, dist = process_image(source_image, landmarker, means)
 
-            if bgr is None:
-                st.error("Could not read image. Please try another file.")
+            if mp_image is None:
+                st.error("No hand detected or vector shape mismatch. Try a clearer image.")
                 return
 
-            # show annotated image
-            rgb_display = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            st.image(rgb_display, caption="Detected hand landmarks", use_column_width=True)
+            # Show the original image (Streamlit can display uploaded/camera images directly)
+            st.image(source_image, caption="Input image", use_column_width=True)
 
             if label is None:
-                st.error("No hand detected or vector shape mismatch. Try a clearer image.")
+                st.error("Could not compute a valid prediction. Try a different image.")
             else:
                 st.success(f"Predicted label: **{label}**")
                 st.write(f"Distance to mean vector: `{dist:.4f}`")
         else:
-            st.info("Prediction and annotated image will appear here.")
+            st.info("Prediction will appear here after you provide an image.")
 
 
 if __name__ == "__main__":
