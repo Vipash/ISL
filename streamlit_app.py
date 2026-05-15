@@ -54,9 +54,7 @@ st.info(
 
 st.markdown("### Repository link")
 st.markdown(
-    "[View the complete source code on GitHub](https://github.com/your-username/your-repo)"
+    "[View the complete source code on GitHub](https://github.com/Vipash/ISL)"
 )
 
 st.markdown("### Screenshots / Demo")
-
-st.write("Add screenshots or GIFs here by committing them to the repo and using `st.image()`.")
